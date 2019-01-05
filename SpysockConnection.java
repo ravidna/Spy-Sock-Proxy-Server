@@ -8,15 +8,15 @@ import java.net.Socket;
 // SpysockProtocol.
 public class SpysockConnection implements Runnable {
 
-  private Socket clientSocket = null;
+  public Socket proxySocket = null;
   private PrintWriter outputPrinter;
   private DataInputStream inputStream;
 
-  public SpysockConnection(Socket clientSocket) {
-    this.clientSocket = clientSocket;
+  public SpysockConnection(Socket proxySocket) {
+    this.proxySocket = proxySocket;
     try {
-      this.outputPrinter = new PrintWriter(clientSocket.getOutputStream(), true);
-      this.inputStream = new DataInputStream(clientSocket.getInputStream());
+      this.outputPrinter = new PrintWriter(proxySocket.getOutputStream(), true);
+      this.inputStream = new DataInputStream(proxySocket.getInputStream());
     } catch (IOException e) {
       e.printStackTrace();
     }
@@ -33,7 +33,7 @@ public class SpysockConnection implements Runnable {
           break;
         }
       }
-      clientSocket.close();
+      proxySocket.close();
     } catch (IOException e) {
       // TODO(Amir): Handle e
     }

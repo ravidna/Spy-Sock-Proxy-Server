@@ -1,8 +1,10 @@
 package spysock;
 
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
@@ -11,14 +13,20 @@ import java.util.Optional;
 
 // Processes a single client packet.
 public class SpysockProtocol {
-  TcpPacket ourPacket = getTcpPacketContent();
-  private Socket destSocket = null; //
+  private Socket destSocket = null;
+  private Socket clientScoket = null;
+
+  private static byte REQUEST_GRANTED = 0x5a;
+  private static byte REQUEST_REJECTED = 0x5b;
+  private static byte REQUEST_REJECTED_FAILED_TO_CONNECT = 0x5c;
+  private static byte SOCKS4_PROTOCOL = 0x00;
+  private static int TWO_SECONDS = 4000;
 
   private Optional<TcpPacket> getTcpPacketContent(final byte[] packet) {
+    InetAddress destIp = null;
     // TODO(Amir): Extract all constants to class members.
     if (packet[0] != 4) {
-      // TODO(Amir): We should understand what error to return in case the VN is
-      // not 4.
+      // TODO(Amir): We should understand what error to return in case the VN is not 4.
       return Optional.empty();
     }
 
@@ -29,7 +37,7 @@ public class SpysockProtocol {
 
     int destPort = ByteBuffer.wrap(packet, /* offset */ 2, /* length */ 2)
                              .getInt();
-    InetAddress destIp = null;
+
     try {
       destIp = InetAddress.getByAddress(Arrays.copyOfRange(packet, /* from */
       4, /* to */ 8));
@@ -39,31 +47,49 @@ public class SpysockProtocol {
     return Optional.of(new TcpPacket(destPort, destIp));
   }
 
-  //Function for building and sending the correct packet to the client
-  private void sendToClient(byte resultCode) {
+  //Function for building and sending the correct packet to the client.
+  private void sendReplayPacket(byte resultCode, TcpPacket tcpPacket) {
 
     ByteBuffer response = ByteBuffer.allocate(8);
-    response.putInt(0x00); // the SOCKS4 version of the reply code - should
-    // be 0.
-    response.put(resultCode);
+    response.putInt(0x00); // the SOCKS4 version of the reply code - should be 0.
+    response.put(resultCode); // 90 or 91 or 92 or 93
 
     if (destSocket != null) {
-      response.putInt(destSocket.getPort()); // maybe diffrent put?
-      response.put(.getAddress()); // TODO: how can i get the ip here
+      response.putShort((short) tcpPacket.getDestPort());
+      response.put(tcpPacket.getDestIp().getAddress()); // TODO: how can i get the ip here
     } else {
       byte[] destNotWorking = {0, 0, 0, 0, 0, 0}; // we use only 0's to
       // symbols a non working\existing dest.
       response.put(destNotWorking);
     }
-
     try {
-      DataOutputStream outStreamToClient = new DataOutputStream(destSocket
+      DataOutputStream outToClient = new DataOutputStream(clientScoket.getOutputStream()); //TODO: maybe not clientSocket but destSocket
+      outToClient.write(response.array());
+      outToClient.flush();
+    } catch (IOException e) {
+      //System.err.println("Connection Error:" + e);
+    }
+  }
+
+  private void relay (Socket Client, Socket Destenation) {
+    byte [] data = null;
+    try {
+      DataOutputStream outStreamToClient = new DataOutputStream(Client
           .getOutputStream());
 
-      outStreamToClient.write(response.array());
-      outStreamToClient.flush();
+      DataInputStream inputStreamToClient = new DataInputStream(Destenation
+              .getInputStream());
+
+      data = new byte [150000];
+      int length = 0;
+      length = inputStreamToClient.read(data);
+
+      if (length > 0) {
+        outStreamToClient.write(data, 0, length);
+        outStreamToClient.flush();
+      }
     } catch (IOException e) {
-      //System.err.println("Connection Error:" + e); // TODO: handel eror
+      //System.err.println("Connection Error:" + e); // TODO: handel errors
     }
 
   }
@@ -72,18 +98,33 @@ public class SpysockProtocol {
     State state = State.SUCCESS;
     if (destSocket == null) {
       Optional<TcpPacket> content = getTcpPacketContent(packet);
-      // TODO:
-      // 1. Handle errors in the content creation.
-      // 2. In case there were no errors, initialize the destSocket after
-      //    connecting to the dest socket.
-      // 3. Return a corresponding packet to the client according to the
-      //    instructions.
-    } else {
+      if (content.isPresent()) {
+        try {
+          destSocket.connect(new InetSocketAddress(content.get().getDestIp(), content.get().getDestPort()));
+          sendReplayPacket(REQUEST_GRANTED);
+          System.out.println("Successful connection from" + clientScoket.+":"+clientScoket.getPort()+"to" +content.get().getDestIp()+":"+content.get().getDestPort());
+        } catch (IOException e){
+        sendReplayPacket(REQUEST_REJECTED);
+          System.out.println("Connection error: while parsing request: Unsupported SOCKS protocol version (got (" + packet[0] + ")).");
+         }
+      }
+      else {
+        sendReplayPacket(REQUEST_REJECTED_FAILED_TO_CONNECT);
+        System.out.println("Connection error: while parsing request: Unsupported SOCKS protocol version (got (" + packet[0] + ")).");
+      }
+    }
+    else {
+      Optional<TcpPacket> content = getTcpPacketContent(packet);
+      try{
+        sendReplayPacket(REQUEST_GRANTED);}
+      catch (IOException e) {
+        sendReplayPacket(REQUEST_REJECTED_FAILED_TO_CONNECT);
+        //System.err.println("Connection Error:" + e); // TODO: handel errors
+      }
       // TODO:
       // 1. Check whether the current packet contains a user name and password
       //    and act accordingly.
-      // 2. Send the packet to the dest server and return its response to the
-      //    client.
+
     }
 
     return state;
